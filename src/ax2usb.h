@@ -90,6 +90,8 @@ class AX2USB {
 	state_t state_e1_break_received(uint8_t ps2);
 	state_t state_wait_ack(uint8_t ps2);
 	bool is_timeout_state() { return state == state_t::led_wait_ack || state == state_t::wait_ack; }
+	void handle_code(uint8_t code, bool make_break);
+	void handle_e0_code(uint8_t code, bool make_break);
 
 	/**
 	 * @brief Fn+キーを処理する

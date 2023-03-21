@@ -36,6 +36,7 @@ constexpr uint16_t AUDIO_CONTROL_VOLUME_INCREMENT = 0xe9;
 constexpr uint16_t AUDIO_CONTROL_VOLUME_DECREMENT = 0xea;
 
 constexpr uint32_t STATE_TIMEOUT_MSEC = 300;
+constexpr int USB_SEND_RETRY_COUNT = 3;
 
 }  // namespace
 
@@ -126,10 +127,16 @@ static char
 mod_mark(bool make_break) {
 	return make_break ? '#' : '~';
 }
+
 static char
 key_mark(bool make_break) {
 	return make_break ? '+' : '-';
 }
+
+static const char*
+mb_str(bool make_break) {
+	return make_break ? "make" : "break";
+};
 #endif
 
 bool
@@ -138,7 +145,7 @@ AX2USB::begin(uint8_t ps2_data_pin, uint8_t ps2_clock_pin) {
 	usb_hid.setReportDescriptor(desc_hid_report, sizeof(desc_hid_report));
 	usb_hid.setPollInterval(2);
 	usb_hid.enableOutEndpoint(false);
-	usb_hid.setReportCallback(NULL, hid_report_callback);
+	usb_hid.setReportCallback(nullptr, hid_report_callback);
 
 #if defined(ARDUINO_ARCH_MBED) && defined(ARDUINO_ARCH_RP2040)
 	// Manual begin() is required on core without built-in support for TinyUSB
@@ -153,8 +160,9 @@ AX2USB::begin(uint8_t ps2_data_pin, uint8_t ps2_clock_pin) {
 	ps2.set_recv_callback([this](auto code) { rx.put(code); });
 	ps2.begin(ps2_data_pin, ps2_clock_pin);
 
-	while (!TinyUSBDevice.mounted())
+	while (!TinyUSBDevice.mounted()) {
 		delay(1);
+	}
 
 #if AX2USB_DEBUG
 	for (size_t i = 0; i < std::size(map::ax2_usb); i++) {
@@ -205,7 +213,7 @@ AX2USB::wait_usb_ready() {
 
 void
 AX2USB::send_keyboard_report() {
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < USB_SEND_RETRY_COUNT; i++) {
 		if (usb_hid.keyboardReport(REPORT_ID_KBD, usb_mod.value, usb_codes)) {
 			break;
 		}
@@ -215,7 +223,7 @@ AX2USB::send_keyboard_report() {
 
 void
 AX2USB::send_report16(uint8_t report_id, uint16_t usage) {
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < USB_SEND_RETRY_COUNT; i++) {
 		if (usb_hid.sendReport16(report_id, usage)) {
 			break;
 		}
@@ -256,9 +264,10 @@ void
 AX2USB::send_usb_key_oneshot(uint8_t usb) {
 	if (update_usb_codes(usb, true)) {
 		send_keyboard_report();
+		wait_usb_ready();
 	}
-	wait_usb_ready();
 	update_usb_codes(usb, false);
+	// send break code even if make code was not sent, to be sure
 	send_keyboard_report();
 }
 
@@ -266,7 +275,24 @@ void
 AX2USB::send_report16_oneshot(uint8_t report_id, uint16_t usage) {
 	send_report16(report_id, usage);
 	wait_usb_ready();
-	send_report16(REPORT_ID_CONSUMER, DO_NOTHING);
+	send_report16(report_id, DO_NOTHING);
+}
+
+void
+AX2USB::handle_code(uint8_t code, bool make_break) {
+	if (code == ps2key::ALT_PRINT_SCREEN) {
+		send_usb_key_mod(HID_KEY_PRINT_SCREEN, HID_KEY_ALT_LEFT, make_break);
+	} else if (code < std::size(map::ax2_usb)) {
+		if (auto usb = map::ax2_usb[code]; usb) {
+			if (!handle_special_key(usb, make_break)) {
+				send_usb_key(usb, make_break);
+			}
+		} else {
+			DEBUG_PRINTLN("%s %02x is not mapped to usb_key", mb_str(make_break), code);
+		}
+	} else {
+		DEBUG_PRINTLN("%s %02x not handled", mb_str(make_break), code);
+	}
 }
 
 AX2USB::state_t
@@ -279,86 +305,82 @@ AX2USB::state_base(uint8_t code) {
 		return state_t::e1_received;
 	} else if (code == ps2ind::BAT_COMPLETED) {
 		should_send_led = true;
-		return state_t::base;
 	} else {
-		if (code < std::size(map::ax2_usb)) {
-			auto usb = map::ax2_usb[code];
-			if (usb == 0) {
-				DEBUG_PRINTLN("make %02x is not mapped to usb_key", code);
-				return state_t::base;
-			}
-			if (!handle_special_key(usb, true)) {
-				send_usb_key(usb, true);
-			}
-		} else if (code == ps2key::ALT_PRINT_SCREEN) {
-			send_usb_key_mod(HID_KEY_PRINT_SCREEN, HID_KEY_ALT_LEFT, true);
-		} else {
-			DEBUG_PRINTLN("make %02x not handled", code);
-		}
+		handle_code(code, true);
 	}
 	return state_t::base;
 }
 
 AX2USB::state_t
 AX2USB::state_brk_received(uint8_t code) {
-	if (code < std::size(map::ax2_usb)) {
-		auto usb = map::ax2_usb[code];
-		if (usb == 0) {
-			DEBUG_PRINTLN("break %02x is not mapped to usb_key", code);
-			return state_t::base;
-		}
-		if (!handle_special_key(usb, false)) {
-			send_usb_key(usb, false);
-		}
-	} else if (code == ps2key::ALT_PRINT_SCREEN) {
-		send_usb_key_mod(HID_KEY_PRINT_SCREEN, HID_KEY_ALT_LEFT, false);
-	} else {
-		DEBUG_PRINTLN("break %02x not handled", code);
-	}
+	handle_code(code, false);
 	return state_t::base;
+}
+
+void
+AX2USB::handle_e0_code(uint8_t code, bool make_break) {
+	if (code == ps2key::L_SHIFT || code == ps2key::R_SHIFT) {
+		DEBUG_PRINTLN("simply ignore %cshift after E0", key_mark(make_break));
+	} else if (code == ps2key::BREAK) {  // [Pause/Break] key
+		if (!handle_special_key(HID_KEY_PAUSE, make_break)) {
+			send_usb_key_mod(HID_KEY_PAUSE, HID_KEY_CONTROL_LEFT, make_break);
+		}
+	} else {
+		if (auto* ent = find_e0_map(code); ent) {
+			if (!handle_special_key(ent->usb, make_break)) {
+				send_usb_key(ent->usb, make_break);
+			}
+		} else {
+			DEBUG_PRINTLN("%02x: Unexpected code after E0 %s", code, mb_str(make_break));
+		}
+	}
 }
 
 AX2USB::state_t
 AX2USB::state_e0_received(uint8_t code) {
-	if (code == ps2ind::BREAK) {
+	if (code == ps2ind::BREAK) {  // key release
 		return e0_break_received;
-	} else if (code == ps2key::L_SHIFT || code == ps2key::R_SHIFT) {
-		DEBUG_PRINTLN("simply ignore +shift after E0");
-		return state_t::base;
-	} else if (code == ps2key::BREAK) {
-		if (!handle_special_key(HID_KEY_PAUSE, true)) {
-			send_usb_key_mod(HID_KEY_PAUSE, HID_KEY_CONTROL_LEFT, true);
-		}
-		return state_t::base;
-	} else {
-		auto* ent = find_e0_map(code);
-		if (!ent) {
-			DEBUG_PRINTLN("%02x: Unexpected code after E0", code);
-			return state_t::base;
-		}
-		if (!handle_special_key(ent->usb, true)) {
-			send_usb_key(ent->usb, true);
-		}
-		return state_t::base;
 	}
+	handle_e0_code(code, true);
+	return state_t::base;
+}
+
+AX2USB::state_t
+AX2USB::state_e0_break_received(uint8_t code) {
+	handle_e0_code(code, false);
+	return state_t::base;
 }
 
 AX2USB::state_t
 AX2USB::state_e1_received(uint8_t code) {
-	if (code == ps2key::L_CTRL) {
+	if (code == ps2ind::BREAK) {
+		return state_t::e1_break_received;
+	} else if (code == ps2key::L_CTRL) {
 		// wait for pause, keep state
 		return state_t::e1_received;
 	} else if (code == ps2key::PAUSE) {
 		if (!handle_special_key(HID_KEY_PAUSE, true)) {
 			send_usb_key(HID_KEY_PAUSE, true);
 		}
-		return state_t::base;
-	} else if (code == ps2ind::BREAK) {
-		return state_t::e1_break_received;
 	} else {
-		DEBUG_PRINTLN("%02x: Unhandled e1 key", code);
-		return state_t::base;
+		DEBUG_PRINTLN("%02x: Unexpected code after E1 make", code);
 	}
+	return state_t::base;
+}
+
+AX2USB::state_t
+AX2USB::state_e1_break_received(uint8_t code) {
+	if (code == ps2key::L_CTRL) {
+		// wait for pause, keep state
+		return state_t::e1_received;
+	} else if (code == ps2key::PAUSE) {
+		if (!handle_special_key(HID_KEY_PAUSE, false)) {
+			send_usb_key(HID_KEY_PAUSE, false);
+		}
+	} else {
+		DEBUG_PRINTLN("%02x: Unexpected code after E1 break", code);
+	}
+	return state_t::base;
 }
 
 AX2USB::state_t
@@ -373,8 +395,8 @@ AX2USB::state_led_wait_ack(uint8_t code) {
 }
 
 AX2USB::state_t
-AX2USB::state_wait_ack(uint8_t ps2) {
-	if (ps2 == ps2ind::ACK) {
+AX2USB::state_wait_ack(uint8_t code) {
+	if (code == ps2ind::ACK) {
 		return state_t::base;
 	}
 	return state_t::wait_ack;
@@ -488,44 +510,6 @@ AX2USB::handle_special_key(uint8_t usb, bool make_break) {
 	}
 
 	return false;
-}
-
-AX2USB::state_t
-AX2USB::state_e0_break_received(uint8_t code) {
-	if (code == ps2key::L_SHIFT || code == ps2key::R_SHIFT) {
-		DEBUG_PRINTLN("simply ignore -shift after E0");
-		return state_t::base;
-	} else if (code == ps2key::BREAK) {
-		if (!handle_special_key(HID_KEY_PAUSE, false)) {
-			send_usb_key_mod(HID_KEY_PAUSE, HID_KEY_CONTROL_LEFT, false);
-		}
-		return state_t::base;
-	} else {
-		auto* ent = find_e0_map(code);
-		if (!ent) {
-			DEBUG_PRINTLN("%02x: Unexpected code after E0", code);
-			return state_t::base;
-		}
-		if (!handle_special_key(ent->usb, false)) {
-			send_usb_key(ent->usb, false);
-		}
-		return state_t::base;
-	}
-}
-
-AX2USB::state_t
-AX2USB::state_e1_break_received(uint8_t code) {
-	if (code == ps2key::L_CTRL) {
-		return state_t::e1_received;
-	} else if (code == ps2key::PAUSE) {
-		if (!handle_special_key(HID_KEY_PAUSE, false)) {
-			send_usb_key(HID_KEY_PAUSE, false);
-		}
-		return state_t::base;
-	} else {
-		DEBUG_PRINTLN("%02x: Unexpected code after E1 break", code);
-		return state_t::base;
-	}
 }
 
 void
