@@ -218,6 +218,9 @@ AX2USB::send_keyboard_report() {
 			break;
 		}
 		wait_usb_ready();
+		if (i == USB_SEND_RETRY_COUNT) {
+			DEBUG_PRINTLN("Failed to send keyboard to USB");
+		}
 	}
 }
 
@@ -228,6 +231,9 @@ AX2USB::send_report16(uint8_t report_id, uint16_t usage) {
 			break;
 		}
 		wait_usb_ready();
+		if (i == USB_SEND_RETRY_COUNT) {
+			DEBUG_PRINTLN("Failed to send report to USB");
+		}
 	}
 }
 
