@@ -19,7 +19,17 @@ class AX2USB {
 	static inline constexpr uint8_t REPORT_ID_KBD = 1;
 
  private:
-	enum state_t { base, brk_received, e0_received, e1_received, led_wait_ack, e0_break_received, e1_break_received, wait_ack };
+	enum state_t {
+		base,
+		brk_received,
+		e0_received,
+		e1_received,
+		led_wait_ack,
+		e0_break_received,
+		e1_break_received,
+		wait_ack,
+		no_data_received
+	};
 	union __attribute__((packed)) usb_led_t {
 		struct __attribute__((packed)) {
 			bool num : 1;
@@ -50,7 +60,7 @@ class AX2USB {
 	PS2 ps2;
 	Adafruit_USBD_HID usb_hid;
 	uint32_t timeout_state_started = 0;
-	state_t state = state_t::base;
+	state_t state = state_t::no_data_received;
 	bool should_send_led = false;
 	bool caps_sent = false;
 	mutable Mutex rx_mux;

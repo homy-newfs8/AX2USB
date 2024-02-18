@@ -2,7 +2,7 @@
 #include "ax2usb.h"
 #include "util.h"
 
-#define AX2USB_DEBUG 0
+#define AX2USB_DEBUG 1
 #include "debug.h"
 
 namespace {
@@ -17,9 +17,10 @@ bool running;
 
 void
 setup() {
-	Serial.begin(115200);
+	Serial1.begin(115200);
+	delay(100);
 	if (!a2u.begin(data_pin, clock_pin)) {
-		Serial.println("Failed to init ax2usb");
+		Serial1.println("Failed to init ax2usb");
 		return;
 	}
 #ifdef ARDUINO_SEEED_XIAO_RP2040

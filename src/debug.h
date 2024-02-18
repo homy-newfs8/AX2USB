@@ -6,34 +6,35 @@
 namespace {
 
 constexpr uint32_t DEBUG_PRINT_DELAY = 500;
+Stream& DebugOut = Serial1;
 
 }  // namespace
 
-#define DEBUG_PRINTLN(...)      \
-	do {                          \
-		Serial.printf(__VA_ARGS__); \
-		Serial.println();           \
+#define DEBUG_PRINTLN(...)        \
+	do {                            \
+		DebugOut.printf(__VA_ARGS__); \
+		DebugOut.println();           \
 	} while (false)
 #define DEBUG_PRINTLNw(...)                            \
 	do {                                                 \
 		static uint32_t last_printed;                      \
 		if (millis() - last_printed > DEBUG_PRINT_DELAY) { \
-			Serial.printf(__VA_ARGS__);                      \
-			Serial.println();                                \
+			DebugOut.printf(__VA_ARGS__);                    \
+			DebugOut.println();                              \
 			last_printed = millis();                         \
 		}                                                  \
 	} while (false)
-#define DEBUG_PRINT(...)        \
-	do {                          \
-		Serial.printf(__VA_ARGS__); \
-		Serial.println();           \
+#define DEBUG_PRINT(...)          \
+	do {                            \
+		DebugOut.printf(__VA_ARGS__); \
+		DebugOut.println();           \
 	} while (false)
 #define DEBUG_PRINTw(...)                              \
 	do {                                                 \
 		static uint32_t last_printed;                      \
 		if (millis() - last_printed > DEBUG_PRINT_DELAY) { \
-			Serial.printf(__VA_ARGS__);                      \
-			Serial.println();                                \
+			DebugOut.printf(__VA_ARGS__);                    \
+			DebugOut.println();                              \
 			last_printed = millis();                         \
 		}                                                  \
 	} while (false)

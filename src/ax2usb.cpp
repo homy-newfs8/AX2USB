@@ -3,9 +3,11 @@
 #include <mutex>
 #include <string>
 #include "ax2usbmap.hpp"
-#include "debug.h"
 #include "ps2code.hpp"
 #include "util.h"
+
+#define AX2USB_DEBUG 1
+#include "debug.h"
 
 namespace ax2usb {
 
@@ -33,6 +35,7 @@ constexpr uint16_t AUDIO_CONTROL_VOLUME_INCREMENT = 0xe9;
 constexpr uint16_t AUDIO_CONTROL_VOLUME_DECREMENT = 0xea;
 
 constexpr uint32_t STATE_TIMEOUT_MSEC = 300;
+constexpr uint32_t INITIAL_RESPONSE_TIMEOUT = 500;
 constexpr int USB_SEND_RETRY_COUNT = 3;
 
 }  // namespace
@@ -109,7 +112,10 @@ AX2USB::begin(uint8_t ps2_data_pin, uint8_t ps2_clock_pin) {
 		return false;
 	}
 
-	ps2.set_recv_callback([this](auto code) { rx.put(code); });
+	ps2.set_recv_callback([this](auto code) {
+		std::lock_guard lock(rx_mux);
+		rx.put(code);
+	});
 	ps2.begin(ps2_data_pin, ps2_clock_pin);
 
 	while (!TinyUSBDevice.mounted()) {
@@ -134,13 +140,13 @@ AX2USB::begin(uint8_t ps2_data_pin, uint8_t ps2_clock_pin) {
 
 bool
 AX2USB::ps2_available() const {
-	std::lock_guard<Mutex> lock(rx_mux);
+	std::lock_guard lock(rx_mux);
 	return rx.count() > 0;
 }
 
 int
 AX2USB::ps2_read() {
-	std::lock_guard<Mutex> lock(rx_mux);
+	std::lock_guard lock(rx_mux);
 	uint8_t v;
 	if (rx.get(v)) {
 		return v;
@@ -173,7 +179,7 @@ AX2USB::state_base(uint8_t code) {
 		return state_t::e0_received;
 	} else if (code == ps2ind::E1) {
 		return state_t::e1_received;
-	} else if (code == ps2ind::BAT_COMPLETED) {
+	} else if (code == ps2ind::BAT_COMPLETED || code == ps2ind::ECHO_RESPONSE) {
 		should_send_led = true;
 	} else {
 		handle_code(code, true);
@@ -401,7 +407,20 @@ AX2USB::loop() {
 		state = state_t::led_wait_ack;
 		timeout_state_started = millis();
 	}
+	if (state == state_t::no_data_received) {
+		if (timeout_state_started == 0) {
+			timeout_state_started = millis();
+		} else if (millis() - timeout_state_started > INITIAL_RESPONSE_TIMEOUT) {
+			DEBUG_PRINTLN("echo request sent");
+			ps2.send(ps2cmd::ECHO);
+			timeout_state_started = millis();
+		}
+	}
 	if (auto code = ps2_read(); code >= 0) {
+		if (state == state_t::no_data_received) {
+			DEBUG_PRINTLN("First msg received");
+			state = state_t::base;
+		}
 		uint8_t k = code;
 		DEBUG_PRINTLN("<%02x", k);
 		state_t next_state;
