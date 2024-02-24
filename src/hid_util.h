@@ -19,7 +19,7 @@ class HidUtil {
 		};
 		uint8_t value;
 	};
-	usb_mod_t usb_mod = { 0 };
+	usb_mod_t usb_mod = {};
 
 	HidUtil(Adafruit_USBD_HID& usb_hid, uint8_t report_id_kbd) : usb_hid(usb_hid), report_id_kbd(report_id_kbd) {}
 

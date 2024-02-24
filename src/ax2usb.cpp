@@ -464,7 +464,7 @@ AX2USB::loop() {
 
 void
 AX2USB::handle_hid_report(uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize) {
-	if (report_id != REPORT_ID_KBD || report_type != HID_REPORT_TYPE_OUTPUT) {
+	if (report_id != REPORT_ID_KBD || report_type != HID_REPORT_TYPE_OUTPUT || bufsize < 1) {
 		return;
 	}
 	usb_led.value = buffer[0];

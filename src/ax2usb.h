@@ -39,7 +39,7 @@ class AX2USB {
 			bool kana : 1;
 		};
 		uint8_t value;
-	} usb_led = { 0 };
+	} usb_led = {};
 	union __attribute__((packed)) ps2_led_t {
 		struct __attribute__((packed)) {
 			bool scroll : 1;
@@ -48,14 +48,14 @@ class AX2USB {
 			bool kana : 1;
 		};
 		uint8_t value;
-	} ps2_led = { 0 };
+	} ps2_led = {};
 	union __attribute__((packed)) fn_flags_t {
 		struct __attribute__((packed)) {
 			bool fn_left;
 			bool fn_right;
 		};
 		uint8_t value;
-	} fn_flags = { 0 };
+	} fn_flags = {};
 
 	PS2 ps2;
 	Adafruit_USBD_HID usb_hid;
